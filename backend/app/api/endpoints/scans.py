@@ -772,22 +772,53 @@ async def execute_sandbox_probe(request: SandboxProbeRequest, db: aiosqlite.Conn
     target_name = target[1]
     capabilities = json.loads(target[3])
 
-    # Synchronize target mitigation state
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            await client.put(f"{base_url}/config/mitigation", json={"enabled": request.mitigation_enabled})
-    except Exception:
-        pass
-
     t0 = time.time()
+    raw_data = {}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{base_url}/chat",
-                json={"messages": [{"role": "user", "content": request.prompt}]},
-                headers={"x-customer-id": request.session_user_id}
-            )
-            raw_data = resp.json() if resp.status_code == 200 else {"response_text": resp.text}
+        if "127.0.0.1" in base_url or "localhost" in base_url:
+            try:
+                from main import app as root_app
+                path_prefix = ""
+                if "/internal-rag" in base_url:
+                    path_prefix = "/internal-rag"
+                elif "/target-app" in base_url:
+                    path_prefix = "/target-app"
+                
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=root_app), base_url="http://test") as client:
+                    try:
+                        await client.put(f"{path_prefix}/config/mitigation", json={"enabled": request.mitigation_enabled})
+                    except Exception:
+                        pass
+                    resp = await client.post(
+                        f"{path_prefix}/chat",
+                        json={"messages": [{"role": "user", "content": request.prompt}]},
+                        headers={"x-customer-id": request.session_user_id}
+                    )
+                    raw_data = resp.json() if resp.status_code == 200 else {"response_text": resp.text}
+            except Exception:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    try:
+                        await client.put(f"{base_url}/config/mitigation", json={"enabled": request.mitigation_enabled})
+                    except Exception:
+                        pass
+                    resp = await client.post(
+                        f"{base_url}/chat",
+                        json={"messages": [{"role": "user", "content": request.prompt}]},
+                        headers={"x-customer-id": request.session_user_id}
+                    )
+                    raw_data = resp.json() if resp.status_code == 200 else {"response_text": resp.text}
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                try:
+                    await client.put(f"{base_url}/config/mitigation", json={"enabled": request.mitigation_enabled})
+                except Exception:
+                    pass
+                resp = await client.post(
+                    f"{base_url}/chat",
+                    json={"messages": [{"role": "user", "content": request.prompt}]},
+                    headers={"x-customer-id": request.session_user_id}
+                )
+                raw_data = resp.json() if resp.status_code == 200 else {"response_text": resp.text}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Target communication error: {e}")
 

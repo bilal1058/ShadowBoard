@@ -9,6 +9,42 @@ from app.core.replay import regression_engine
 router = APIRouter(prefix="/findings", tags=["Findings"])
 
 
+@router.get("")
+@router.get("/")
+async def list_all_findings(limit: int = 50, db: aiosqlite.Connection = Depends(get_db)):
+    cursor = await db.execute(
+        "SELECT id, finding_id, owasp_category, taxonomy_version, "
+        "application_security_class, status, attack_outcome, evidence_status, "
+        "confidence, severity, evidence_json, evidence_hash, remediation, scan_id "
+        "FROM findings ORDER BY id DESC LIMIT ?",
+        (limit,)
+    )
+    rows = await cursor.fetchall()
+    results = []
+    for r in rows:
+        try:
+            ev = json.loads(r[10]) if r[10] else {}
+        except Exception:
+            ev = {}
+        results.append({
+            "id": r[0],
+            "finding_id": r[1],
+            "owasp_category": r[2],
+            "taxonomy_version": r[3],
+            "application_security_class": r[4],
+            "status": r[5],
+            "attack_outcome": r[6],
+            "evidence_status": r[7],
+            "confidence": r[8],
+            "severity": r[9],
+            "evidence": ev,
+            "evidence_hash": r[11],
+            "remediation": r[12],
+            "scan_id": r[13],
+        })
+    return results
+
+
 @router.get("/scan/{scan_id}")
 async def list_scan_findings(scan_id: int, db: aiosqlite.Connection = Depends(get_db)):
     cursor = await db.execute(

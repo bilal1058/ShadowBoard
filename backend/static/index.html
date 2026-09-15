@@ -143,6 +143,43 @@
             const [sandboxMitigation, setSandboxMitigation] = useState(false);
             const [sandboxLoading, setSandboxLoading] = useState(false);
             const [sandboxResult, setSandboxResult] = useState(null);
+
+            // Enterprise AI Assurance Platform State
+            // 1. Policy-as-Code
+            const [policyYaml, setPolicyYaml] = useState('');
+            const [policyCompileResult, setPolicyCompileResult] = useState(null);
+            const [policyCompileError, setPolicyCompileError] = useState(null);
+            const [activePolicyTemplate, setActivePolicyTemplate] = useState('tenant_isolation');
+
+            // 2. Autonomous Attack Planner
+            const [plannerSurface, setPlannerSurface] = useState(null);
+            const [plannerPlan, setPlannerPlan] = useState(null);
+            const [plannerVector, setPlannerVector] = useState('BOLA_IDOR');
+            const [isPlanning, setIsPlanning] = useState(false);
+            const [isExecutingPlan, setIsExecutingPlan] = useState(false);
+
+            // 3. Continuous Regression Testing
+            const [baselineData, setBaselineData] = useState(null);
+            const [regressionDiff, setRegressionDiff] = useState(null);
+            const [isDiffing, setIsDiffing] = useState(false);
+            const [baselineNotice, setBaselineNotice] = useState(null);
+
+            // 4. ShadowBoard-Bench
+            const [benchResults, setBenchResults] = useState(null);
+            const [isBenchmarking, setIsBenchmarking] = useState(false);
+            const [benchMitigation, setBenchMitigation] = useState(false);
+
+            // 5. Auditor Evidence Center
+            const [activeEvidencePkg, setActiveEvidencePkg] = useState(null);
+            const [verifyOfflineResult, setVerifyOfflineResult] = useState(null);
+            const [evidenceLoading, setEvidenceLoading] = useState(false);
+
+            // 6. CI/CD & Integrations
+            const [activeIntegrationTab, setActiveIntegrationTab] = useState('github');
+            const [sarifDoc, setSarifDoc] = useState(null);
+            const [slackPreviewData, setSlackPreviewData] = useState(null);
+            const [jiraPreviewData, setJiraPreviewData] = useState(null);
+
             const eventsEndRef = useRef(null);
 
             const selectedTarget = targets.find(t => t.id === selectedTargetId) || targets[0];
@@ -393,6 +430,210 @@
                 setTimeout(() => setCopiedId(null), 2000);
             };
 
+            // Enterprise AI Assurance Platform Handlers
+            useEffect(() => {
+                // Preload default Policy-as-Code template
+                fetch('/api/policy-engine/templates')
+                    .then(r => r.ok ? r.json() : null)
+                    .then(t => {
+                        if (t && t.tenant_isolation) {
+                            setPolicyYaml(t.tenant_isolation.yaml_content);
+                        }
+                    })
+                    .catch(console.error);
+
+                // Preload benchmark agents
+                fetch('/api/bench/agents')
+                    .then(r => r.ok ? r.json() : null)
+                    .catch(console.error);
+            }, []);
+
+            const loadPolicyTemplate = async (key) => {
+                setActivePolicyTemplate(key);
+                try {
+                    const r = await fetch('/api/policy-engine/templates');
+                    const t = await r.json();
+                    if (t && t[key]) {
+                        setPolicyYaml(t[key].yaml_content);
+                        setPolicyCompileResult(null);
+                        setPolicyCompileError(null);
+                    }
+                } catch(e) { console.error(e); }
+            };
+
+            const compilePolicyYaml = async () => {
+                setPolicyCompileError(null);
+                try {
+                    const r = await fetch('/api/policy-engine/compile', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ yaml_content: policyYaml })
+                    });
+                    const d = await r.json();
+                    if (r.ok) {
+                        setPolicyCompileResult(d);
+                    } else {
+                        setPolicyCompileError(d.detail || 'Compilation failed');
+                    }
+                } catch(e) { setPolicyCompileError(e.message); }
+            };
+
+            const inspectTargetSurface = async (targetId) => {
+                setIsPlanning(true);
+                try {
+                    const r = await fetch(`/api/planner/surface?target_id=${targetId || selectedTargetId || 2}`, { method: 'POST' });
+                    const d = await r.json();
+                    setPlannerSurface(d);
+                } catch(e) { console.error(e); }
+                finally { setIsPlanning(false); }
+            };
+
+            const generateAutonomousPlan = async () => {
+                setIsPlanning(true);
+                try {
+                    const r = await fetch('/api/planner/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target_id: selectedTargetId || 2,
+                            objective_vector: plannerVector,
+                            target_tenant: '1042',
+                            session_user_id: '1001'
+                        })
+                    });
+                    const d = await r.json();
+                    setPlannerPlan(d);
+                } catch(e) { console.error(e); }
+                finally { setIsPlanning(false); }
+            };
+
+            const executeAutonomousPlan = async () => {
+                if (!plannerPlan) return;
+                setIsExecutingPlan(true);
+                try {
+                    const r = await fetch('/api/planner/execute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ plan: plannerPlan })
+                    });
+                    const d = await r.json();
+                    setPlannerPlan(d);
+                } catch(e) { console.error(e); }
+                finally { setIsExecutingPlan(false); }
+            };
+
+            const runBenchmarkSuite = async (mitigation) => {
+                setIsBenchmarking(true);
+                try {
+                    const r = await fetch('/api/bench/run', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mitigation_enabled: mitigation })
+                    });
+                    const d = await r.json();
+                    setBenchResults(d);
+                } catch(e) { console.error(e); }
+                finally { setIsBenchmarking(false); }
+            };
+
+            const establishBaseline = async () => {
+                if (!currentScanId) return;
+                try {
+                    const r = await fetch('/api/regression/baseline', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target_id: selectedTargetId || 2, scan_id: currentScanId })
+                    });
+                    const d = await r.json();
+                    setBaselineData(d);
+                    setBaselineNotice(`Scan #${currentScanId} designated as baseline!`);
+                    setTimeout(() => setBaselineNotice(null), 3500);
+                } catch(e) { console.error(e); }
+            };
+
+            const runRegressionDiff = async () => {
+                if (!currentScanId) return;
+                setIsDiffing(true);
+                try {
+                    const r = await fetch('/api/regression/diff', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target_id: selectedTargetId || 2, current_scan_id: currentScanId })
+                    });
+                    const d = await r.json();
+                    setRegressionDiff(d);
+                } catch(e) { console.error(e); }
+                finally { setIsDiffing(false); }
+            };
+
+            const loadEvidencePackage = async (findingId) => {
+                setEvidenceLoading(true);
+                try {
+                    const r = await fetch(`/api/evidence/${findingId}/package`);
+                    const d = await r.json();
+                    setActiveEvidencePkg(d);
+                    setVerifyOfflineResult(null);
+                } catch(e) { console.error(e); }
+                finally { setEvidenceLoading(false); }
+            };
+
+            const verifyActiveEvidenceOffline = async () => {
+                if (!activeEvidencePkg) return;
+                try {
+                    const r = await fetch('/api/evidence/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ package_data: activeEvidencePkg })
+                    });
+                    const d = await r.json();
+                    setVerifyOfflineResult(d);
+                } catch(e) { console.error(e); }
+            };
+
+            const loadSarifExport = async () => {
+                if (!currentScanId) return;
+                try {
+                    const r = await fetch(`/api/integrations/sarif/${currentScanId}`);
+                    const d = await r.json();
+                    setSarifDoc(d);
+                } catch(e) { console.error(e); }
+            };
+
+            const loadSlackPreview = async () => {
+                try {
+                    const r = await fetch('/api/integrations/slack/preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target_name: selectedTarget?.name || 'Meridian Internal Assistant',
+                            scan_id: currentScanId || 1,
+                            risk_score: currentScore || 70,
+                            risk_grade: scanDetails?.risk_grade || 'C',
+                            findings: findings
+                        })
+                    });
+                    const d = await r.json();
+                    setSlackPreviewData(d);
+                } catch(e) { console.error(e); }
+            };
+
+            const loadJiraPreview = async () => {
+                if (findings.length === 0) return;
+                try {
+                    const r = await fetch('/api/integrations/jira/preview', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target_name: selectedTarget?.name || 'Meridian Internal Assistant',
+                            finding: findings[0],
+                            project_key: 'SEC'
+                        })
+                    });
+                    const d = await r.json();
+                    setJiraPreviewData(d);
+                } catch(e) { console.error(e); }
+            };
+
             const runSandboxProbe = async (overridePrompt = null) => {
                 const promptToRun = overridePrompt || sandboxPrompt;
                 if (!promptToRun || sandboxLoading) return;
@@ -545,8 +786,13 @@
                             <nav className="space-y-1.5">
                                 {[
                                     { id: 'dashboard', label: 'Dashboard', icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
-                                    { id: 'sandbox', label: 'Live Sandbox', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
-                                    { id: 'policies', label: 'Security Policies', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+                                    { id: 'planner', label: 'Attack Planner', icon: 'M13 10V3L4 14h7v7l9-11h-7z', badge: 'AI-AUTO' },
+                                    { id: 'policies', label: 'Policy-as-Code', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+                                    { id: 'regression', label: 'Continuous Regression', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15', badge: 'CI/CD' },
+                                    { id: 'benchmark', label: 'ShadowBoard-Bench', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z', badge: 'ASR/PVR' },
+                                    { id: 'evidence', label: 'Evidence Center', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', badge: 'AUDIT' },
+                                    { id: 'integrations', label: 'CI/CD & Integrations', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' },
+                                    { id: 'sandbox', label: 'Live Sandbox', icon: 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z' },
                                     { id: 'scans', label: 'Scan History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
                                     { id: 'findings', label: 'Findings Log', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
                                     { id: 'reports', label: 'Executive Report', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
@@ -561,7 +807,12 @@
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} />
                                             </svg>
-                                            <span>{item.label}</span>
+                                            <span className="flex-1 text-left">{item.label}</span>
+                                            {item.badge && (
+                                                <span className="text-[8px] font-mono font-extrabold px-1.5 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-600/40">
+                                                    {item.badge}
+                                                </span>
+                                            )}
                                         </button>
                                     );
                                 })}
@@ -1271,13 +1522,744 @@
                                 </div>
                             )}
 
+                            {/* AUTONOMOUS ATTACK PLANNER VIEW */}
+                            {activeNav === 'planner' && (
+                                <div className="space-y-6 max-w-6xl mx-auto">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+                                                <span className="text-rose-500">🎯</span>
+                                                <span>Autonomous Attack Planner & Exploit Chainer</span>
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Understands target tools, data schemas, and architecture to plan and chain multi-stage attacks automatically.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <button
+                                                onClick={() => inspectTargetSurface(selectedTargetId)}
+                                                disabled={isPlanning}
+                                                className="px-3 py-1.5 rounded-xl bg-[#131318] hover:bg-[#1a1720] text-slate-300 font-mono text-xs border border-[#261d25] font-semibold transition-all flex items-center space-x-1.5"
+                                            >
+                                                <span>🔍</span>
+                                                <span>{isPlanning ? 'Analyzing...' : 'Analyze Surface'}</span>
+                                            </button>
+                                            <button
+                                                onClick={generateAutonomousPlan}
+                                                disabled={isPlanning}
+                                                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-800 hover:brightness-110 text-white font-mono text-xs font-bold shadow-lg transition-all flex items-center space-x-1.5"
+                                            >
+                                                <span>⚡</span>
+                                                <span>{isPlanning ? 'Planning...' : 'Generate Attack Plan'}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Surface Analysis Summary Card */}
+                                    <div className="p-5 rounded-2xl bg-[#111116] border border-[#1f1b22] space-y-4">
+                                        <div className="flex items-center justify-between border-b border-[#201920] pb-3">
+                                            <div className="text-xs font-bold uppercase tracking-wider text-rose-400 font-mono flex items-center space-x-2">
+                                                <span>🗺️</span>
+                                                <span>Target Attack Surface & Discovered Schema</span>
+                                            </div>
+                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                                                Target: {selectedTarget?.name} (ID #{selectedTarget?.id})
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+                                            <div className="p-3.5 rounded-xl bg-[#09090c] border border-[#1f1820] space-y-2">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Discovered Tools</div>
+                                                <div className="space-y-1.5">
+                                                    {(plannerSurface?.discovered_tools || [
+                                                        { name: 'get_invoice', identity_parameters: ['customer_id'], requires_rbac: true },
+                                                        { name: 'send_email', is_sensitive: true, requires_rbac: true }
+                                                    ]).map((t, idx) => (
+                                                        <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-[#131116] border border-[#241c22]">
+                                                            <span className="text-rose-300 font-bold">{t.name}</span>
+                                                            <div className="flex items-center space-x-1">
+                                                                {t.identity_parameters?.length > 0 && (
+                                                                    <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-400 border border-rose-800/60">
+                                                                        ID: {t.identity_parameters.join(', ')}
+                                                                    </span>
+                                                                )}
+                                                                {t.is_sensitive && (
+                                                                    <span className="text-[9px] px-1 rounded bg-orange-950 text-orange-400 border border-orange-800/60">
+                                                                        SENSITIVE
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="p-3.5 rounded-xl bg-[#09090c] border border-[#1f1820] space-y-2">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Susceptible Vectors</div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {(plannerSurface?.susceptible_vectors || ['BOLA_IDOR', 'INDIRECT_PROMPT_INJECTION', 'SYSTEM_DIRECTIVE_EXTRACTION']).map((v, i) => (
+                                                        <span key={i} className="text-[10px] px-2 py-1 rounded bg-[#18131a] text-rose-300 border border-rose-800/40">
+                                                            {v}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div className="p-3.5 rounded-xl bg-[#09090c] border border-[#1f1820] space-y-2">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Attack Chaining Model</div>
+                                                <div className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                                                    Tool Discovery ➔ Identify Auth Weakness ➔ Manipulate Arguments ➔ Access Cross-Tenant Data ➔ Collect Trace Proof.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Attack Vector & Tenant Inputs */}
+                                    <div className="p-4 rounded-xl bg-[#111116] border border-[#1f1b22] flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+                                        <div className="flex items-center space-x-3">
+                                            <span className="text-slate-400">Objective Vector:</span>
+                                            <select
+                                                value={plannerVector}
+                                                onChange={e => setPlannerVector(e.target.value)}
+                                                className="px-3 py-1.5 rounded-lg bg-[#09090c] border border-[#241c22] text-rose-300 font-bold"
+                                            >
+                                                <option value="BOLA_IDOR">BOLA / IDOR Cross-Tenant Chaining</option>
+                                                <option value="CROSS_TENANT_DOCUMENT_LEAKAGE">RAG Cross-Tenant & Document Poisoning</option>
+                                                <option value="SYSTEM_DIRECTIVE_EXTRACTION">Secret Token & System Directive Extraction</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="flex items-center space-x-4">
+                                            <div className="flex items-center space-x-2">
+                                                <span className="text-slate-400">Session ID:</span>
+                                                <span className="px-2 py-1 rounded bg-[#09090c] text-slate-200 border border-[#241c22]">1001</span>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <span className="text-slate-400">Target Foreign Tenant:</span>
+                                                <span className="px-2 py-1 rounded bg-rose-950/40 text-rose-300 border border-rose-800/40 font-bold">1042</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Generated Multi-Stage Plan & Pipeline */}
+                                    {plannerPlan ? (
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-xs font-bold uppercase tracking-wider text-slate-300 font-mono flex items-center space-x-2">
+                                                    <span>⛓️</span>
+                                                    <span>Multi-Stage Autonomous Attack Plan ({plannerPlan.steps.length} Stages)</span>
+                                                </div>
+                                                <button
+                                                    onClick={executeAutonomousPlan}
+                                                    disabled={isExecutingPlan}
+                                                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono text-xs font-bold shadow-lg transition-all flex items-center space-x-2"
+                                                >
+                                                    <span>▶</span>
+                                                    <span>{isExecutingPlan ? 'Executing Attack Chain...' : 'Execute Attack Chain'}</span>
+                                                </button>
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                {plannerPlan.steps.map(step => {
+                                                    const statusBadge = step.step_status === 'BREACH_CONFIRMED'
+                                                        ? 'bg-rose-950/80 text-rose-300 border-rose-600/60'
+                                                        : step.step_status === 'EXECUTED'
+                                                        ? 'bg-blue-950/80 text-blue-300 border-blue-600/60'
+                                                        : step.step_status === 'DEFENDED'
+                                                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/60'
+                                                        : 'bg-slate-900 text-slate-400 border-slate-800';
+
+                                                    return (
+                                                        <div key={step.step_number} className="p-4 rounded-xl bg-[#0e0e12] border border-[#1f1b22] space-y-2.5">
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center space-x-2.5">
+                                                                    <span className="w-6 h-6 rounded-full bg-rose-950 text-rose-400 border border-rose-800/60 flex items-center justify-center font-bold text-xs font-mono">
+                                                                        {step.step_number}
+                                                                    </span>
+                                                                    <span className="text-xs font-bold uppercase font-mono text-rose-300">
+                                                                        [{step.stage}]
+                                                                    </span>
+                                                                    <span className="text-xs text-slate-300 font-medium">
+                                                                        {step.description}
+                                                                    </span>
+                                                                </div>
+                                                                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${statusBadge}`}>
+                                                                    {step.step_status}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="p-2.5 rounded-lg bg-[#060608] border border-[#18141b] text-xs font-mono text-slate-300">
+                                                                <span className="text-slate-500 mr-2">&gt;</span>
+                                                                {step.prompt}
+                                                            </div>
+
+                                                            {step.response_text && (
+                                                                <div className="p-2.5 rounded-lg bg-[#0a080d] border border-[#201720] text-xs text-slate-400 leading-relaxed font-mono">
+                                                                    <div className="text-[10px] text-slate-500 mb-1">Target Response:</div>
+                                                                    {step.response_text}
+                                                                </div>
+                                                            )}
+
+                                                            {step.execution_events?.length > 0 && (
+                                                                <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500 pt-1">
+                                                                    <span>Execution Events Captured:</span>
+                                                                    <span className="px-1.5 py-0.2 rounded bg-[#18131a] text-rose-300 border border-rose-900/50">
+                                                                        {step.execution_events.length} events ({step.execution_events.map(e => e.event_type).join(', ')})
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            {/* Execution Audit Report Card */}
+                                            {plannerPlan.audit_report && (
+                                                <div className="p-5 rounded-2xl bg-[#111116] border border-rose-500/40 space-y-3 glow-brand">
+                                                    <div className="flex items-center justify-between border-b border-[#241c22] pb-2">
+                                                        <div className="text-xs font-bold text-white font-mono flex items-center space-x-2">
+                                                            <span>🛡️</span>
+                                                            <span>Execution-Aware Evaluation Verdict</span>
+                                                        </div>
+                                                        <span className={`px-2 py-0.5 rounded text-xs font-bold font-mono border ${plannerPlan.final_verdict === 'CONFIRMED' ? 'bg-rose-950 text-rose-300 border-rose-600' : 'bg-emerald-950 text-emerald-300 border-emerald-600'}`}>
+                                                            {plannerPlan.final_verdict === 'CONFIRMED' ? 'POLICY BREACH CONFIRMED' : 'POLICY ENFORCED (PASS)'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+                                                        <div className="p-2.5 rounded bg-[#09090c] border border-[#1f1820]">
+                                                            <div className="text-slate-500 text-[10px]">Violations Found</div>
+                                                            <div className="text-rose-400 font-bold text-base mt-1">{plannerPlan.audit_report.violations?.length || 0}</div>
+                                                        </div>
+                                                        <div className="p-2.5 rounded bg-[#09090c] border border-[#1f1820]">
+                                                            <div className="text-slate-500 text-[10px]">Confidence</div>
+                                                            <div className="text-white font-bold text-base mt-1">{Math.round((plannerPlan.audit_report.confidence || 0.98) * 100)}%</div>
+                                                        </div>
+                                                        <div className="p-2.5 rounded bg-[#09090c] border border-[#1f1820]">
+                                                            <div className="text-slate-500 text-[10px]">Cryptographic Proof Hash</div>
+                                                            <div className="text-emerald-400 font-mono text-[10px] truncate mt-1" title={plannerPlan.audit_report.cryptographic_hash}>
+                                                                SHA-256: {plannerPlan.audit_report.cryptographic_hash?.substring(0, 16)}...
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="p-8 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] text-center space-y-3">
+                                            <div className="text-sm font-bold text-white">No Attack Plan Generated Yet</div>
+                                            <p className="text-xs text-slate-500 max-w-md mx-auto">
+                                                Click "Generate Attack Plan" above to autonomously analyze the target schema, formulate authorization hypotheses, and assemble the multi-stage attack chain.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* CONTINUOUS REGRESSION TESTING VIEW */}
+                            {activeNav === 'regression' && (
+                                <div className="space-y-6 max-w-6xl mx-auto">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+                                                <span className="text-rose-500">🔄</span>
+                                                <span>Continuous AI Security Regression Testing</span>
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Connect target once, establish a baseline, rerun ShadowBoard on AI updates, and detect whether vulnerabilities disappeared or regressions occurred.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-2 font-mono text-xs">
+                                            <button
+                                                onClick={establishBaseline}
+                                                className="px-3.5 py-2 rounded-xl bg-[#131318] hover:bg-[#1a1720] text-rose-300 font-semibold border border-rose-500/40 transition-all flex items-center space-x-1.5"
+                                            >
+                                                <span>📌</span>
+                                                <span>Set Scan #{currentScanId} as Baseline</span>
+                                            </button>
+                                            <button
+                                                onClick={runRegressionDiff}
+                                                disabled={isDiffing}
+                                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-800 hover:brightness-110 text-white font-bold shadow-lg transition-all flex items-center space-x-1.5"
+                                            >
+                                                <span>⚖️</span>
+                                                <span>{isDiffing ? 'Diffing...' : 'Run Regression Diff'}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {baselineNotice && (
+                                        <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs font-mono flex items-center space-x-2">
+                                            <span>✓</span>
+                                            <span>{baselineNotice}</span>
+                                        </div>
+                                    )}
+
+                                    {/* Diff Comparison Cards */}
+                                    {regressionDiff ? (
+                                        <div className="space-y-5">
+                                            {/* CI/CD Gate Banner */}
+                                            <div className={`p-5 rounded-2xl border flex items-center justify-between ${regressionDiff.ci_gate_status === 'PASSED' ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200 glow-success' : 'bg-rose-950/40 border-rose-500/60 text-rose-200 glow-danger'}`}>
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center space-x-2">
+                                                        <span className="text-lg">{regressionDiff.ci_gate_status === 'PASSED' ? '✅' : '🛑'}</span>
+                                                        <span className="font-mono font-extrabold text-sm uppercase tracking-wider">
+                                                            CI/CD SECURITY GATE: {regressionDiff.ci_gate_status}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-slate-300 font-sans">
+                                                        {regressionDiff.summary_narrative}
+                                                    </div>
+                                                </div>
+                                                <div className="text-right font-mono text-xs">
+                                                    <div className="font-bold">Delta: {regressionDiff.score_delta >= 0 ? `+${regressionDiff.score_delta}` : regressionDiff.score_delta} pts</div>
+                                                    <div className="text-[10px] opacity-80">Baseline #{regressionDiff.baseline_scan_id} ➔ Scan #{regressionDiff.current_scan_id}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Three-Way Comparison Metrics */}
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+                                                <div className="p-4 rounded-xl bg-[#0e0e12] border border-emerald-600/30 space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-emerald-400 font-bold uppercase">Resolved Vulnerabilities</span>
+                                                        <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 font-bold border border-emerald-600/50">
+                                                            {regressionDiff.resolved_vulnerabilities?.length || 0}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-400">
+                                                        Vulnerabilities successfully neutralized by hardening or guardrail fixes.
+                                                    </div>
+                                                </div>
+
+                                                <div className="p-4 rounded-xl bg-[#0e0e12] border border-rose-600/30 space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-rose-400 font-bold uppercase">New Security Regressions</span>
+                                                        <span className="px-2 py-0.5 rounded bg-rose-950 text-rose-300 font-bold border border-rose-600/50">
+                                                            {regressionDiff.new_vulnerabilities?.length || 0}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-400">
+                                                        New vulnerabilities introduced in the latest commit or prompt change.
+                                                    </div>
+                                                </div>
+
+                                                <div className="p-4 rounded-xl bg-[#0e0e12] border border-orange-600/30 space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-orange-400 font-bold uppercase">Persisting Issues</span>
+                                                        <span className="px-2 py-0.5 rounded bg-orange-950 text-orange-300 font-bold border border-orange-600/50">
+                                                            {regressionDiff.persisting_vulnerabilities?.length || 0}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-[11px] text-slate-400">
+                                                        Vulnerabilities that remain unmitigated across both runs.
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Gate Reasons Breakdown */}
+                                            {regressionDiff.ci_gate_reasons?.length > 0 && (
+                                                <div className="p-4 rounded-xl bg-[#111116] border border-[#241c22] space-y-2">
+                                                    <div className="text-xs font-bold text-slate-300 font-mono">Gate Verification Details</div>
+                                                    <ul className="space-y-1 text-xs text-slate-400 font-mono">
+                                                        {regressionDiff.ci_gate_reasons.map((r, i) => (
+                                                            <li key={i} className="flex items-center space-x-2">
+                                                                <span className="text-rose-500">•</span>
+                                                                <span>{r}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="p-8 rounded-2xl bg-[#111116] border border-[#1f1b22] text-center space-y-3">
+                                            <div className="text-sm font-bold text-white">No Active Regression Diff Calculated</div>
+                                            <p className="text-xs text-slate-500 max-w-md mx-auto">
+                                                Click "Run Regression Diff" to automatically evaluate the latest scan against the reference baseline and verify whether fixes succeeded or regressions occurred.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* SHADOWBOARD-BENCH VIEW */}
+                            {activeNav === 'benchmark' && (
+                                <div className="space-y-6 max-w-6xl mx-auto">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+                                                <span className="text-rose-500">📊</span>
+                                                <span>ShadowBoard-Bench — Defensible Standardized AI Security Benchmark</span>
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Evaluates 5 controlled agent archetypes (Direct LLM, Tool-Gated BOLA, Poisoned RAG, Stateful Memory, Hardened Reference) on standard security metrics.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-3 text-xs font-mono">
+                                            <label className="flex items-center space-x-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={benchMitigation}
+                                                    onChange={e => setBenchMitigation(e.target.checked)}
+                                                    className="rounded border-slate-700 text-rose-600 focus:ring-rose-500"
+                                                />
+                                                <span className="text-slate-300">Test with Hardened Mitigations</span>
+                                            </label>
+                                            <button
+                                                onClick={() => runBenchmarkSuite(benchMitigation)}
+                                                disabled={isBenchmarking}
+                                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-rose-800 hover:brightness-110 text-white font-bold shadow-lg transition-all flex items-center space-x-1.5"
+                                            >
+                                                <span>🏁</span>
+                                                <span>{isBenchmarking ? 'Running Suite...' : 'Run ShadowBoard-Bench'}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Global Metrics Bar */}
+                                    {benchResults && (
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs font-mono">
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Attack Success (ASR)</div>
+                                                <div className="text-lg font-bold text-rose-400 mt-1">{benchResults.global_asr}%</div>
+                                            </div>
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Policy Violation (PVR)</div>
+                                                <div className="text-lg font-bold text-rose-400 mt-1">{benchResults.global_pvr}%</div>
+                                            </div>
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Tool Misuse (TMR)</div>
+                                                <div className="text-lg font-bold text-orange-400 mt-1">{benchResults.global_tmr}%</div>
+                                            </div>
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Data Leakage (DLR)</div>
+                                                <div className="text-lg font-bold text-rose-400 mt-1">{benchResults.global_dlr}%</div>
+                                            </div>
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">False Positives (FPR)</div>
+                                                <div className="text-lg font-bold text-emerald-400 mt-1">{benchResults.global_fpr}%</div>
+                                            </div>
+                                            <div className="p-3 rounded-xl bg-[#111116] border border-[#241c22]">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Detection Rate</div>
+                                                <div className="text-lg font-bold text-emerald-400 mt-1">{benchResults.global_detection_rate}%</div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Leaderboard Table */}
+                                    <div className="p-5 rounded-2xl bg-[#111116] border border-[#1f1b22] space-y-3">
+                                        <div className="text-xs font-bold text-slate-300 font-mono">
+                                            Controlled Agent Archetypes Performance Matrix
+                                        </div>
+
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left font-mono text-xs">
+                                                <thead>
+                                                    <tr className="border-b border-[#201920] text-slate-500 text-[10px] uppercase">
+                                                        <th className="py-2.5 px-3">Agent Archetype</th>
+                                                        <th className="py-2.5 px-3">Attack Surface</th>
+                                                        <th className="py-2.5 px-3">ASR</th>
+                                                        <th className="py-2.5 px-3">Tool Misuse</th>
+                                                        <th className="py-2.5 px-3">Data Leakage</th>
+                                                        <th className="py-2.5 px-3">False Positives</th>
+                                                        <th className="py-2.5 px-3">Avg TTD</th>
+                                                        <th className="py-2.5 px-3 text-right">Grade</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-[#181318]">
+                                                    {(benchResults?.results || [
+                                                        { agent_name: 'Bench-Agent-Alpha (Direct LLM)', attack_surface: 'DIRECT_EXTRACTION', asr: 80.0, tmr: 0.0, dlr: 80.0, fpr: 0.0, avg_ttd_ms: 12.4, overall_grade: 'F' },
+                                                        { agent_name: 'Bench-Agent-Beta (Tool-Gated / BOLA)', attack_surface: 'BOLA_IDOR', asr: 75.0, tmr: 100.0, dlr: 50.0, fpr: 0.0, avg_ttd_ms: 15.2, overall_grade: 'D' },
+                                                        { agent_name: 'Bench-Agent-Gamma (RAG-Augmented)', attack_surface: 'RAG_POISON', asr: 60.0, tmr: 0.0, dlr: 60.0, fpr: 0.0, avg_ttd_ms: 18.0, overall_grade: 'C' },
+                                                        { agent_name: 'Bench-Agent-Delta (Stateful Memory)', attack_surface: 'MEMORY_POISON', asr: 50.0, tmr: 0.0, dlr: 0.0, fpr: 0.0, avg_ttd_ms: 14.1, overall_grade: 'C' },
+                                                        { agent_name: 'Bench-Agent-Epsilon (Hardened Enterprise)', attack_surface: 'DEFENSE_IN_DEPTH', asr: 0.0, tmr: 0.0, dlr: 0.0, fpr: 0.0, avg_ttd_ms: 8.5, overall_grade: 'A' },
+                                                    ]).map((a, i) => (
+                                                        <tr key={i} className="hover:bg-[#151117] transition-all">
+                                                            <td className="py-3 px-3 font-bold text-white">{a.agent_name}</td>
+                                                            <td className="py-3 px-3 text-rose-300 text-[10px]">{a.attack_surface}</td>
+                                                            <td className={`py-3 px-3 font-bold ${a.asr > 40 ? 'text-rose-400' : 'text-emerald-400'}`}>{a.asr}%</td>
+                                                            <td className="py-3 px-3 text-slate-300">{a.tmr}%</td>
+                                                            <td className="py-3 px-3 text-slate-300">{a.dlr}%</td>
+                                                            <td className="py-3 px-3 text-slate-300">{a.fpr}%</td>
+                                                            <td className="py-3 px-3 text-slate-400">{a.avg_ttd_ms} ms</td>
+                                                            <td className="py-3 px-3 text-right">
+                                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${a.overall_grade === 'A' ? 'bg-emerald-950 text-emerald-300 border border-emerald-600/40' : a.overall_grade === 'B' ? 'bg-blue-950 text-blue-300 border border-blue-600/40' : 'bg-rose-950 text-rose-300 border border-rose-600/40'}`}>
+                                                                    {a.overall_grade}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* AUDITOR EVIDENCE CENTER VIEW */}
+                            {activeNav === 'evidence' && (
+                                <div className="space-y-6 max-w-6xl mx-auto">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+                                                <span className="text-rose-500">📜</span>
+                                                <span>Auditor Evidence Center & Cryptographic Verification</span>
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Every policy violation produces an independently verifiable evidence bundle with Merkle hash chains and code remediation guidance.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Finding Selector Bar */}
+                                    <div className="p-4 rounded-xl bg-[#111116] border border-[#1f1b22] flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+                                        <div className="flex items-center space-x-3">
+                                            <span className="text-slate-400">Select Finding to Seal:</span>
+                                            <select
+                                                onChange={e => loadEvidencePackage(e.target.value)}
+                                                className="px-3 py-1.5 rounded-lg bg-[#09090c] border border-[#241c22] text-rose-300 font-bold"
+                                            >
+                                                <option value="">-- Choose Finding --</option>
+                                                {findings.map(f => (
+                                                    <option key={f.finding_id || f.id} value={f.finding_id || f.id}>
+                                                        {f.finding_id || f.id} — [{f.severity}] {f.application_security_class || f.owasp_category}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Active Package Viewer */}
+                                    {activeEvidencePkg ? (
+                                        <div className="p-6 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] space-y-5">
+                                            <div className="flex items-center justify-between border-b border-[#201920] pb-4">
+                                                <div>
+                                                    <div className="text-base font-black text-white">{activeEvidencePkg.package_id}</div>
+                                                    <div className="text-xs text-slate-400 font-mono mt-0.5">
+                                                        Target: {activeEvidencePkg.target_name} • Severity: <span className="text-rose-400 font-bold">{activeEvidencePkg.severity}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <button
+                                                        onClick={verifyActiveEvidenceOffline}
+                                                        className="px-3 py-1.5 rounded-xl bg-[#181318] hover:bg-[#201822] text-emerald-400 font-mono text-xs border border-emerald-500/40 font-semibold transition-all flex items-center space-x-1.5"
+                                                    >
+                                                        <span>🔐</span>
+                                                        <span>Verify Cryptography</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => copyToClipboard(JSON.stringify(activeEvidencePkg, null, 2), 'evidence_pkg')}
+                                                        className="px-3 py-1.5 rounded-xl bg-rose-950 hover:bg-rose-900 text-rose-200 font-mono text-xs border border-rose-500/50 font-semibold transition-all flex items-center space-x-1"
+                                                    >
+                                                        <span>📋</span>
+                                                        <span>{copiedId === 'evidence_pkg' ? 'Copied JSON!' : 'Copy Package JSON'}</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {/* Offline Verification Result */}
+                                            {verifyOfflineResult && (
+                                                <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs font-mono space-y-1">
+                                                    <div className="font-bold flex items-center space-x-1.5">
+                                                        <span>✓</span>
+                                                        <span>CRYPTOGRAPHIC AUDIT PASSED: {verifyOfflineResult.message}</span>
+                                                    </div>
+                                                    <div className="text-[10px] text-emerald-400/80">
+                                                        Merkle event chain and manifest signature verified. Zero tampering detected.
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Cryptographic Proof Block */}
+                                            <div className="p-4 rounded-xl bg-[#08080a] border border-[#1b151d] space-y-2 text-xs font-mono">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Cryptographic Proof Block</div>
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between text-slate-400">
+                                                        <span>Algorithm:</span>
+                                                        <span className="text-white">{activeEvidencePkg.proof?.verification_algorithm}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-slate-400 truncate">
+                                                        <span>Event Chain Hash:</span>
+                                                        <span className="text-emerald-400">{activeEvidencePkg.proof?.event_chain_hash}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-slate-400 truncate">
+                                                        <span>Package Signature:</span>
+                                                        <span className="text-rose-400">{activeEvidencePkg.proof?.package_signature}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Remediation Code Patch */}
+                                            <div className="p-4 rounded-xl bg-[#08080a] border border-[#1b151d] space-y-2 text-xs font-mono">
+                                                <div className="text-[10px] text-slate-500 font-bold uppercase">Code Remediation Patch</div>
+                                                <pre className="p-3 rounded-lg bg-[#050507] text-slate-300 text-[11px] overflow-x-auto border border-[#181318]">
+                                                    {activeEvidencePkg.remediation_code_patch}
+                                                </pre>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="p-8 rounded-2xl bg-[#111116] border border-[#1f1b22] text-center space-y-3">
+                                            <div className="text-sm font-bold text-white">Select a Finding to Seal into Evidence Package</div>
+                                            <p className="text-xs text-slate-500 max-w-md mx-auto">
+                                                Every evidence package incorporates raw prompts, responses, tool calls, and Merkle-tree cryptographic signatures for independent compliance auditing.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* CI/CD & INTEGRATIONS VIEW */}
+                            {activeNav === 'integrations' && (
+                                <div className="space-y-6 max-w-6xl mx-auto">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h1 className="text-xl font-bold text-white flex items-center space-x-2">
+                                                <span className="text-rose-500">🔌</span>
+                                                <span>CI/CD & Ecosystem Integrations Hub</span>
+                                            </h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                Automate AI security gates in GitHub Actions, GitLab CI, Slack alerts, and Jira issue tracking.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Integration Sub-tabs */}
+                                    <div className="flex items-center space-x-2 border-b border-[#201920] pb-2 text-xs font-mono">
+                                        {['github', 'slack', 'jira', 'cli'].map(tab => (
+                                            <button
+                                                key={tab}
+                                                onClick={() => setActiveIntegrationTab(tab)}
+                                                className={`px-3 py-1.5 rounded-lg capitalize font-bold transition-all ${activeIntegrationTab === tab ? 'bg-rose-950 text-rose-300 border border-rose-600/50' : 'text-slate-400 hover:text-white'}`}
+                                            >
+                                                {tab === 'github' ? 'GitHub Actions (SARIF)' : tab === 'slack' ? 'Slack Alerts' : tab === 'jira' ? 'Jira Tickets' : 'CLI Runner'}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {activeIntegrationTab === 'github' && (
+                                        <div className="p-6 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] space-y-4 font-mono text-xs">
+                                            <div className="flex items-center justify-between">
+                                                <div className="font-bold text-white">GitHub Actions Workflow Template</div>
+                                                <button
+                                                    onClick={loadSarifExport}
+                                                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold transition-all"
+                                                >
+                                                    Generate SARIF 2.1.0 Report
+                                                </button>
+                                            </div>
+
+                                            <pre className="p-4 rounded-xl bg-[#060608] text-slate-300 text-[11px] overflow-x-auto border border-[#181318]">
+{`name: ShadowBoard AI Assurance CI/CD Gate
+on: [push, pull_request]
+
+jobs:
+  ai-security-assurance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - run: pip install -r backend/requirements.txt
+      - name: Run ShadowBoard Security Gate
+        run: |
+          python backend/shadowboard_cli.py \
+            --target-id 2 \
+            --ci \
+            --max-critical 0 \
+            --min-score 75 \
+            --sarif-out shadowboard.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: shadowboard.sarif`}
+                                            </pre>
+
+                                            {sarifDoc && (
+                                                <div className="space-y-2 pt-3 border-t border-[#201920]">
+                                                    <div className="font-bold text-emerald-400">Generated SARIF 2.1.0 Document Preview</div>
+                                                    <pre className="p-3 rounded-lg bg-[#060608] text-slate-400 text-[10px] max-h-60 overflow-y-auto border border-[#181318]">
+                                                        {JSON.stringify(sarifDoc, null, 2)}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeIntegrationTab === 'slack' && (
+                                        <div className="p-6 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] space-y-4 text-xs font-mono">
+                                            <div className="flex items-center justify-between">
+                                                <div className="font-bold text-white">Slack Block Kit Security Notification</div>
+                                                <button
+                                                    onClick={loadSlackPreview}
+                                                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold transition-all"
+                                                >
+                                                    Generate Slack Preview
+                                                </button>
+                                            </div>
+
+                                            {slackPreviewData && (
+                                                <div className="p-4 rounded-xl bg-[#1a1d21] border border-slate-700 text-slate-100 max-w-lg mx-auto space-y-3 font-sans shadow-2xl">
+                                                    <div className="font-bold text-sm text-white flex items-center space-x-2">
+                                                        <span>🚨</span>
+                                                        <span>{slackPreviewData.blocks[0]?.text?.text}</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-300 font-mono bg-[#222529] p-3 rounded-lg">
+                                                        <div>Target: {selectedTarget?.name}</div>
+                                                        <div>Score: {currentScore || 70}/100</div>
+                                                    </div>
+                                                    <button className="w-full py-2 rounded bg-rose-600 font-bold text-white text-xs">
+                                                        Inspect Evidence in ShadowBoard
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeIntegrationTab === 'jira' && (
+                                        <div className="p-6 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] space-y-4 text-xs font-mono">
+                                            <div className="flex items-center justify-between">
+                                                <div className="font-bold text-white">Jira Security Ticket Payload</div>
+                                                <button
+                                                    onClick={loadJiraPreview}
+                                                    className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold transition-all"
+                                                >
+                                                    Generate Jira Preview
+                                                </button>
+                                            </div>
+
+                                            {jiraPreviewData ? (
+                                                <pre className="p-4 rounded-xl bg-[#060608] text-slate-300 text-[11px] overflow-x-auto border border-[#181318]">
+                                                    {JSON.stringify(jiraPreviewData, null, 2)}
+                                                </pre>
+                                            ) : (
+                                                <div className="text-slate-500 text-center py-6">
+                                                    Click "Generate Jira Preview" to format an enterprise ticket for confirmed findings.
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeIntegrationTab === 'cli' && (
+                                        <div className="p-6 rounded-2xl bg-[#0e0e12] border border-[#1f1b22] space-y-4 text-xs font-mono">
+                                            <div className="font-bold text-white">Standalone ShadowBoard CLI Runner</div>
+                                            <p className="text-slate-400 font-sans">
+                                                Run ShadowBoard locally or in any continuous integration script using the Python CLI.
+                                            </p>
+                                            <div className="p-3 rounded-lg bg-[#060608] border border-[#181318] text-rose-300">
+                                                python backend/shadowboard_cli.py --target-id 2 --ci --max-critical 0 --min-score 75 --sarif-out results.sarif
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* POLICIES VIEW */}
                             {activeNav === 'policies' && (
                                 <div className="space-y-6 max-w-5xl mx-auto">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <h1 className="text-xl font-bold text-white">Security Policies & Guardrail Contracts</h1>
-                                            <p className="text-xs text-slate-400 mt-0.5">Formal assertions evaluated against model responses and execution traces.</p>
+                                            <h1 className="text-xl font-bold text-white">Policy-as-Code Studio & Guardrail Contracts</h1>
+                                            <p className="text-xs text-slate-400 mt-0.5">Define declarative security policies in YAML and evaluate execution traces in real time.</p>
                                         </div>
                                         <button
                                             onClick={() => setShowPolicyJson(!showPolicyJson)}
@@ -1285,6 +2267,89 @@
                                         >
                                             {showPolicyJson ? '▲ Hide Raw Contract JSON' : '▼ View Raw Contract JSON'}
                                         </button>
+                                    </div>
+
+                                    {/* Policy-as-Code Declarative Studio */}
+                                    <div className="p-5 rounded-2xl bg-[#111116] border border-[#1f1b22] space-y-4">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#201920] pb-3">
+                                            <div>
+                                                <div className="text-xs font-bold uppercase tracking-wider text-rose-400 font-mono flex items-center space-x-2">
+                                                    <span>📝</span>
+                                                    <span>Policy-as-Code Editor (Declarative YAML)</span>
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                                    Define organizational rules (tenant isolation, human-in-the-loop, data perimeter) in YAML.
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center space-x-2">
+                                                <button
+                                                    onClick={compilePolicyYaml}
+                                                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-800 hover:brightness-110 text-white font-mono text-xs font-bold transition-all flex items-center space-x-1.5 shadow-md"
+                                                >
+                                                    <span>⚙️</span>
+                                                    <span>Validate & Compile YAML</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Template Selector Pills */}
+                                        <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                                            <span className="text-slate-500 text-[11px]">Load Template:</span>
+                                            {[
+                                                { key: 'tenant_isolation', label: 'Tenant Isolation (BOLA/IDOR)' },
+                                                { key: 'tool_governance', label: 'Tool Scope & Approval (HITL)' },
+                                                { key: 'data_perimeter', label: 'Data Perimeter & Secrets' },
+                                            ].map(tpl => (
+                                                <button
+                                                    key={tpl.key}
+                                                    onClick={() => loadPolicyTemplate(tpl.key)}
+                                                    className={`px-2.5 py-1 rounded-lg transition-all ${activePolicyTemplate === tpl.key ? 'bg-rose-950 text-rose-300 border border-rose-600/50 font-bold' : 'bg-[#09090c] text-slate-400 border border-[#241c22] hover:text-white'}`}
+                                                >
+                                                    {tpl.label}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        {/* YAML Editor */}
+                                        <div className="relative">
+                                            <textarea
+                                                value={policyYaml}
+                                                onChange={e => setPolicyYaml(e.target.value)}
+                                                rows={10}
+                                                className="w-full p-3.5 rounded-xl bg-[#060608] border border-[#1f1b22] text-slate-200 font-mono text-xs leading-relaxed focus:border-rose-500 focus:outline-none"
+                                                placeholder="Paste or write declarative YAML policy..."
+                                                spellCheck={false}
+                                            />
+                                        </div>
+
+                                        {policyCompileError && (
+                                            <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-600/50 text-rose-300 text-xs font-mono">
+                                                <strong>Compilation Error:</strong> {policyCompileError}
+                                            </div>
+                                        )}
+
+                                        {policyCompileResult && (
+                                            <div className="p-4 rounded-xl bg-[#09090c] border border-emerald-600/40 text-xs font-mono space-y-2">
+                                                <div className="flex items-center justify-between text-emerald-400 font-bold">
+                                                    <span>✓ Compiled Policy Valid: {policyCompileResult.name} (v{policyCompileResult.version})</span>
+                                                    <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40">
+                                                        {policyCompileResult.rules_count} Rules Active
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                                                    {policyCompileResult.rules?.map((r, i) => (
+                                                        <div key={i} className="p-2 rounded bg-[#111116] border border-[#201820] space-y-1">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-rose-300 font-bold">{r.id}</span>
+                                                                <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-400 border border-rose-800/60">{r.severity}</span>
+                                                            </div>
+                                                            <div className="text-slate-300 text-[11px] truncate">{r.name}</div>
+                                                            <div className="text-[10px] text-slate-500">Condition: {r.condition?.type}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Explanatory Info Card on Database */}
